@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Projeto Ana Clara · Berlim 2025</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1A1714" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#F7F3EE;font-family:'Geist Mono',monospace;-webkit-tap-highlight-color:transparent;}
+    ::-webkit-scrollbar{width:4px;height:4px;}
+    ::-webkit-scrollbar-track{background:#F0EDE8;}
+    ::-webkit-scrollbar-thumb{background:#C4C0B8;border-radius:2px;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    .fadein{animation:fadeIn 0.3s ease;}
+    details>summary{list-style:none;}
+    details>summary::-webkit-details-marker{display:none;}
+    input,textarea,select{font-family:'Geist Mono',monospace;}
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:999;display:flex;align-items:center;justify-content:center;padding:16px;}
+    .modal-box{background:white;border-radius:12px;padding:28px;width:100%;max-width:460px;max-height:90vh;overflow-y:auto;}
+    .btn-primary{background:#1A1714;color:white;border:none;border-radius:6px;padding:12px 22px;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:opacity 0.2s;}
+    .btn-primary:disabled{background:#ccc;cursor:not-allowed;}
+    .btn-secondary{background:white;color:#555;border:1px solid #D4CFC9;border-radius:6px;padding:10px 18px;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;}
+    .btn-danger{background:white;color:#C4521A;border:1px solid #C4521A;border-radius:6px;padding:10px 14px;font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;}
+    .card{background:white;border:1px solid #E0DDD8;border-radius:8px;}
+    .label-sm{font-family:'Geist Mono',monospace;font-size:9px;color:#888;letter-spacing:2px;text-transform:uppercase;}
+    .serif{font-family:'Cormorant Garamond',serif;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const RACE_DATE = new Date("2025-09-27T09:00:00");
+const ACCENT = "#C4521A";
+const GREEN = "#5C7A6A";
+const GOLD = "#B8943A";
+const DARK = "#1A1714";
+
+const LS = {
+  get: (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+const SHEETS_KEY = "berlim_sheets_config";
+const ANTHRO_KEY = "berlim_anthropic_key";
+
+// ─── GOOGLE SHEETS HELPERS ───────────────────────────────────────────────────
+// Uses Google Sheets via Google Apps Script Web App (no OAuth needed)
+// User deploys a simple Apps Script that acts as a REST proxy
+
+async function sheetsRead(scriptUrl, sheet) {
+  const r = await fetch(`${scriptUrl}?action=read&sheet=${sheet}`);
+  return r.json();
+}
+async function sheetsAppend(scriptUrl, sheet, row) {
+  const r = await fetch(scriptUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "append", sheet, row }),
+  });
+  return r.json();
+}
+async function sheetsUpdate(scriptUrl, sheet, rowIndex, row) {
+  const r = await fetch(scriptUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "update", sheet, rowIndex, row }),
+  });
+  return r.json();
+}
+
+// ─── ANTHROPIC HELPER ────────────────────────────────────────────────────────
+async function askClaude(apiKey, messages, maxTokens = 1200) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, messages }),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message);
+  return d.content?.find(b => b.type === "text")?.text || "";
+}
+
+// ─── GPX / TCX PARSER ────────────────────────────────────────────────────────
+function haversine(la1,lo1,la2,lo2){const R=6371000,dLa=(la2-la1)*Math.PI/180,dLo=(lo2-lo1)*Math.PI/180,a=Math.sin(dLa/2)**2+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+function parseGPX(txt){const pts=[],re=/<trkpt[^>]*lat="([^"]+)"[^>]*lon="([^"]+)"[^>]*>([\s\S]*?)<\/trkpt>/g;let m;while((m=re.exec(txt))!==null){const i=m[3],t=(i.match(/<time>([^<]+)<\/time>/)||[])[1],e=parseFloat((i.match(/<ele>([^<]+)<\/ele>/)||[])[1]||0),h=parseInt((i.match(/hr>(\d+)/)||[])[1]||0),c=parseInt((i.match(/cad>(\d+)/)||[])[1]||0);if(t)pts.push({lat:parseFloat(m[1]),lon:parseFloat(m[2]),time:new Date(t),ele:e,hr:h,cad:c});}return pts;}
+function parseTCX(txt){const pts=[],re=/<Trackpoint>([\s\S]*?)<\/Trackpoint>/g;let m;while((m=re.exec(txt))!==null){const i=m[1],t=(i.match(/<Time>([^<]+)<\/Time>/)||[])[1],la=parseFloat((i.match(/<LatitudeDegrees>([^<]+)/)||[])[1]||0),lo=parseFloat((i.match(/<LongitudeDegrees>([^<]+)/)||[])[1]||0),e=parseFloat((i.match(/<AltitudeMeters>([^<]+)/)||[])[1]||0),h=parseInt((i.match(/<Value>(\d+)<\/Value>/)||[])[1]||0),c=parseInt((i.match(/<RunCadence>(\d+)/)||[])[1]||0);if(t&&la&&lo)pts.push({lat:la,lon:lo,time:new Date(t),ele:e,hr:h,cad:c});}return pts;}
+function buildSummary(pts, filename){
+  if(pts.length<2)return null;
+  let dist=0,elev=0,hrS=0,hrC=0,cadS=0,cadC=0,splits=[],kmD=0,kmT=pts[0].time;
+  for(let i=1;i<pts.length;i++){
+    const d=haversine(pts[i-1].lat,pts[i-1].lon,pts[i].lat,pts[i].lon);
+    dist+=d;kmD+=d;
+    if(pts[i].ele>pts[i-1].ele)elev+=pts[i].ele-pts[i-1].ele;
+    if(pts[i].hr>0){hrS+=pts[i].hr;hrC++;}
+    if(pts[i].cad>0){cadS+=pts[i].cad;cadC++;}
+    if(kmD>=1000){const el=(pts[i].time-kmT)/1000;splits.push({km:splits.length+1,pace:el/(kmD/1000)});kmD=0;kmT=pts[i].time;}
+  }
+  if(kmD>200){const el=(pts[pts.length-1].time-kmT)/1000;splits.push({km:splits.length+1,pace:el/(kmD/1000),partial:true});}
+  const totalSecs=(pts[pts.length-1].time-pts[0].time)/1000;
+  return {filename,date:pts[0].time.toLocaleDateString("pt-BR"),distKm:dist/1000,totalSecs,avgPace:totalSecs/(dist/1000),avgHr:hrC>0?Math.round(hrS/hrC):null,avgCad:cadC>0?Math.round(cadS/cadC):null,elevGain:Math.round(elev),splits};
+}
+function fmtPace(s){if(!s||!isFinite(s))return"--";return`${Math.floor(s/60)}:${Math.round(s%60).toString().padStart(2,"0")}`;}
+function fmtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=Math.round(s%60);return h>0?`${h}h${m.toString().padStart(2,"0")}m${ss.toString().padStart(2,"0")}s`:`${m}:${ss.toString().padStart(2,"0")}`;}
+function paceColor(p){return p<4.5*60?GREEN:p<5*60?GOLD:p<6*60?ACCENT:"#999";}
+
+// ─── MINI CHART ───────────────────────────────────────────────────────────────
+function MiniChart({data, color, unit, label}){
+  const vals=data.filter(v=>v!==null);
+  if(vals.length<2)return <div style={{fontFamily:"'Geist Mono',monospace",fontSize:10,color:"#aaa"}}>Dados insuficientes</div>;
+  const min=Math.min(...vals)*0.98,max=Math.max(...vals)*1.02,w=180,h=55,p=8;
+  const pts=data.map((v,i)=>({x:p+(i/(data.length-1))*(w-p*2),y:v===null?null:h-p-((v-min)/(max-min))*(h-p*2),v}));
+  const path=pts.filter(q=>q.y!==null).map((q,i)=>`${i===0?"M":"L"}${q.x},${q.y}`).join(" ");
+  const last=pts.filter(q=>q.y!==null).slice(-1)[0];
+  const first=pts.filter(q=>q.y!==null)[0];
+  const delta=last.v-first.v;
+  const up=delta>0;
+  const isGoodUp=label==="Músculo";
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+      <div className="label-sm">{label}</div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <svg width={w} height={h} style={{overflow:"visible",maxWidth:"100%"}}>
+          <defs><linearGradient id={`g${label.replace(/\s/g,"")}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.15"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+          <path d={path+` L${pts.filter(q=>q.y!==null).slice(-1)[0].x},${h} L${pts.filter(q=>q.y!==null)[0].x},${h} Z`} fill={`url(#g${label.replace(/\s/g,"")})`}/>
+          <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
+          {pts.filter(q=>q.y!==null).map((q,i)=><circle key={i} cx={q.x} cy={q.y} r={3} fill={color}/>)}
+        </svg>
+        <div>
+          <div className="serif" style={{fontSize:22,fontWeight:600,color:DARK,lineHeight:1}}>{last.v}{unit}</div>
+          <div style={{fontFamily:"'Geist Mono',monospace",fontSize:10,color:up===(isGoodUp)?GREEN:ACCENT,marginTop:2}}>{up?"▲":"▼"} {Math.abs(delta).toFixed(1)}{unit}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SETUP MODAL ─────────────────────────────────────────────────────────────
+function SetupModal({config, onSave}){
+  const [scriptUrl, setScriptUrl] = useState(config?.scriptUrl || "");
+  const [apiKey, setApiKey] = useState(config?.apiKey || "");
+  const [step, setStep] = useState(1);
+
+  const SCRIPT_CODE = `// Cole este código no Google Apps Script (script.google.com)
+// Crie um novo projeto, cole tudo, salve e publique como Web App (Anyone can access)
+
+const SHEET_ID = "SEU_SPREADSHEET_ID_AQUI"; // substitua pelo ID da sua planilha
+
+function doGet(e) {
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(e.parameter.sheet) 
+    || SpreadsheetApp.openById(SHEET_ID).insertSheet(e.parameter.sheet);
+  const data = sheet.getDataRange().getValues();
+  return ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  const body = JSON.parse(e.postData.contents);
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName(body.sheet) || ss.insertSheet(body.sheet);
+  if (body.action === "append") {
+    sheet.appendRow(body.row);
+  } else if (body.action === "update") {
+    const range = sheet.getRange(body.rowIndex + 1, 1, 1, body.row.length);
+    range.setValues([body.row]);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ok:true}))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
+  return(
+    <div className="modal-overlay">
+      <div className="modal-box">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div className="serif" style={{fontSize:20,fontWeight:600}}>Configurar App</div>
+          <div style={{fontFamily:"'Geist Mono',monospace",fontSize:9,color:"#aaa"}}>Passo {step} de 3</div>
+        </div>
+
+        {step===1 && (
+          <div>
+            <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:8,padding:16,marginBottom:20}}>
+              <div style={{fontWeight:600,fontSize:12,marginBottom:8}}>1. Crie a Planilha Google</div>
+              <div style={{fontSize:12,color:"#555",lineHeight:1.7}}>
+                1. Acesse <strong>sheets.google.com</strong> e crie uma planilha nova<br/>
+                2. Copie o ID da URL: <code style={{background:"#fff",padding:"1px 4px",borderRadius:3,fontSize:11}}>docs.google.com/spreadsheets/d/<strong style={{color:ACCENT}}>SEU_ID_AQUI</strong>/edit</code><br/>
+                3. Guarde esse ID — você vai precisar no próximo passo
+              </div>
+            </div>
+            <button className="btn-primary" style={{width:"100%"}} onClick={()=>setStep(2)}>Próximo →</button>
+          </div>
+        )}
+
+        {step===2 && (
+          <div>
+            <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:8,padding:16,marginBottom:16}}>
+              <div style={{fontWeight:600,fontSize:12,marginBottom:8}}>2. Configure o Google Apps Script</div>
+              <div style={{fontSize:12,color:"#555",lineHeight:1.7}}>
+                1. Acesse <strong>script.google.com</strong> → Novo projeto<br/>
+                2. Apague o código existente e cole o código abaixo<br/>
+                3. Substitua <code style={{background:"#fff",padding:"1px 4px",borderRadius:3,fontSize:11}}>SEU_SPREADSHEET_ID_AQUI</code> pelo ID da sua planilha<br/>
+                4. Salve (Ctrl+S) → Implantar → Nova implantação<br/>
+                5. Tipo: <strong>App da Web</strong> · Executar como: <strong>Eu</strong> · Acesso: <strong>Qualquer pessoa</strong><br/>
+                6. Copie a URL gerada e cole abaixo
+              </div>
+            </div>
+            <div style={{background:"#1A1714",borderRadius:6,padding:14,marginBottom:16,overflowX:"auto"}}>
+              <pre style={{fontFamily:"'Geist Mono',monospace",fontSize:9,color:"#E8D5C8",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{SCRIPT_CODE}</pre>
+            </div>
+            <div className="label-sm" style={{marginBottom:6}}>URL do Web App</div>
+            <input value={scriptUrl} onChange={e=>setScriptUrl(e.target.value)}
+              placeholder="https://script.google.com/macros/s/.../exec"
+              style={{width:"100%",padding:"10px 12px",border:"1px solid #D4CFC9",borderRadius:6,fontSize:12,marginBottom:16,outline:"none"}}/>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn-secondary" onClick={()=>setStep(1)}>← Voltar</button>
+              <button className="btn-primary" style={{flex:1}} disabled={!scriptUrl.includes("script.google.com")} onClick={()=>setStep(3)}>Próximo →</button>
+            </div>
+          </div>
+        )}
+
+        {step===3 && (
+          <div>
+            <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:8,padding:16,marginBottom:16}}>
+              <div style={{fontWeight:600,fontSize:12,marginBottom:8}}>3. Chave da API Anthropic (opcional)</div>
+              <div style={{fontSize:12,color:"#555",lineHeight:1.7}}>
+                Necessária para análise de treinos, exames e plano dinâmico.<br/>
+                Obtenha em <strong>console.anthropic.com</strong> → API Keys.<br/>
+                Fica salva só no seu navegador, nunca enviada para servidores.
+              </div>
+            </div>
+            <div className="label-sm" style={{marginBottom:6}}>Chave da API (sk-ant-...)</div>
+            <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)}
+              placeholder="sk-ant-api03-..."
+              style={{width:"100%",padding:"10px 12px",border:"1px solid #D4CFC9",borderRadius:6,fontSize:12,marginBottom:20,outline:"none"}}/>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn-secondary" onClick={()=>setStep(2)}>← Voltar</button>
+              <button className="btn-primary" style={{flex:1}} disabled={!scriptUrl} onClick={()=>onSave({scriptUrl,apiKey})}>Salvar e Começar →</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADD BIOIMPEDANCIA MODAL ──────────────────────────────────────────────────
+function AddBioModal({onSave, onClose}){
+  const today = new Date().toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+  const [f, setF] = useState({date:today,peso:"",gordura:"",musculo:"",agua:"",massaGorda:"",mlg:"",obs:""});
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+  const n = v => v===""?null:parseFloat(v);
+  const submit = () => { onSave({date:f.date,peso:n(f.peso),gordura:n(f.gordura),musculo:n(f.musculo),agua:n(f.agua),massaGorda:n(f.massaGorda),mlg:n(f.mlg),obs:f.obs}); onClose(); };
+
+  const Field = ({label,k,ph})=>(
+    <div>
+      <div className="label-sm" style={{marginBottom:4}}>{label}</div>
+      <input value={f[k]} onChange={e=>set(k,e.target.value)} placeholder={ph} type={k==="date"||k==="obs"?"text":"number"} step="0.1"
+        style={{width:"100%",padding:"8px 10px",border:"1px solid #D4CFC9",borderRadius:4,fontSize:12,outline:"none",color:DARK}}/>
+    </div>
+  );
+
+  return(
+    <div className="modal-overlay">
+      <div className="modal-box">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div className="serif" style={{fontSize:20,fontWeight:600}}>Nova Bioimpedância</div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#aaa"}}>×</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <Field label="Data (dd/mm)" k="date" ph={today}/>
+          <Field label="Peso (kg)" k="peso" ph="59.1"/>
+          <Field label="% Gordura" k="gordura" ph="17.5"/>
+          <Field label="Músculo (kg)" k="musculo" ph="26.4"/>
+          <Field label="Água (kg)" k="agua" ph="34.7"/>
+          <Field label="Massa Gorda (kg)" k="massaGorda" ph="10.3"/>
+          <Field label="MLG (kg)" k="mlg" ph="48.8"/>
+        </div>
+        <div style={{marginBottom:16}}>
+          <div className="label-sm" style={{marginBottom:4}}>Observação</div>
+          <input value={f.obs} onChange={e=>set("obs",e.target.value)} placeholder="Como você está se sentindo, contexto..."
+            style={{width:"100%",padding:"8px 10px",border:"1px solid #D4CFC9",borderRadius:4,fontSize:12,outline:"none",color:DARK}}/>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn-primary" style={{flex:1}} disabled={!f.date||!f.peso} onClick={submit}>Salvar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── EVOLUCAO TAB ─────────────────────────────────────────────────────────────
+function EvolucaoTab({config, evolution, setEvolution}){
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [aiInsight, setAiInsight] = useState(LS.get("berlim_bio_insight",""));
+  const [loadingInsight, setLoadingInsight] = useState(false);
+
+  const MEDIDAS = [
+    {label:"Cintura",jan:71.1,mar:71.0,unit:"cm"},{label:"Quadril",jan:92.7,mar:92.0,unit:"cm"},
+    {label:"Abdômen",jan:79.4,mar:79.0,unit:"cm"},{label:"Braço relax.",jan:27.1,mar:26.5,unit:"cm"},
+    {label:"Braço contrat.",jan:28.5,mar:28.1,unit:"cm"},{label:"Coxa medial",jan:49.3,mar:48.5,unit:"cm"},
+    {label:"Panturrilha",jan:34.0,mar:33.5,unit:"cm"},
+  ];
+
+  const saveEntry = async (entry) => {
+    setSaving(true);
+    const newEvol = [...evolution, entry].sort((a,b)=>{
+      const [da,ma]=(a.date||"").split("/").map(Number);
+      const [db,mb]=(b.date||"").split("/").map(Number);
+      return(ma*100+da)-(mb*100+db);
+    });
+    setEvolution(newEvol);
+    LS.set("berlim_evolution_v2", newEvol);
+    if(config?.scriptUrl){
+      try{
+        await sheetsAppend(config.scriptUrl,"Bioimpedancia",[
+          entry.date,entry.peso,entry.gordura,entry.musculo,entry.agua,entry.massaGorda,entry.mlg,entry.obs,new Date().toISOString()
+        ]);
+      }catch(e){console.warn("Sheets error:",e);}
+    }
+    setSaving(false);
+  };
+
+  const generateInsight = async () => {
+    if(!config?.apiKey||evolution.length<2)return;
+    setLoadingInsight(true);
+    try{
+      const hist = evolution.map(e=>`${e.date}: peso ${e.peso}kg, gordura ${e.gordura??"-"}%, músculo ${e.musculo??"-"}kg, água ${e.agua??"-"}kg`).join("\n");
+      const text = await askClaude(config.apiKey,[{role:"user",content:`Você é uma nutricionista esportiva especializada em atletas de endurance femininas.
+
+Analise a evolução de composição corporal desta atleta e dê um diagnóstico atualizado:
+
+PERFIL: Ana Clara, 36 anos, 170 cm, meta Sub-4h Maratona de Berlim (27/set/2025)
+Treina corrida 4x/sem + musculação 2x/sem, ~40 km/semana
+
+HISTÓRICO DE BIOIMPEDÂNCIA:
+${hist}
+
+Responda em português com:
+1. **Tendência atual** — o que os dados mostram
+2. **Pontos positivos** da composição para maratona
+3. **Alertas** — o que monitorar
+4. **Recomendação prática** para os próximos 30 dias
+
+Seja direta e específica.`}]);
+      setAiInsight(text);
+      LS.set("berlim_bio_insight",text);
+    }catch(e){setAiInsight("Erro: "+e.message);}
+    setLoadingInsight(false);
+  };
+
+  const latest = evolution[evolution.length-1]||{};
+
+  return(
+    <div className="fadein">
+      {showAdd && <AddBioModal onSave={saveEntry} onClose={()=>setShowAdd(false)}/>}
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+        <div>
+          <div className="label-sm">Última medição: {latest.date||"–"}</div>
+          {latest.obs&&<div style={{fontSize:11,color:"#888",marginTop:2,fontStyle:"italic"}}>{latest.obs}</div>}
+        </div>
+        <button className="btn-primary" disabled={saving} onClick={()=>setShowAdd(true)}>
+          {saving?"Salvando...":"+ Nova Medição"}
+        </button>
+      </div>
+
+      {/* CHARTS */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:14,marginBottom:28}}>
+        {[{key:"peso",label:"Peso",color:DARK,unit:"kg"},{key:"musculo",label:"Músculo",color:GREEN,unit:"kg"},{key:"gordura",label:"% Gordura",color:ACCENT,unit:"%"},{key:"agua",label:"Água",color:"#4A90A4",unit:"kg"}].map(m=>(
+          <div key={m.key} className="card" style={{padding:18}}>
+            <MiniChart data={evolution.map(e=>e[m.key])} color={m.color} unit={m.unit} label={m.label}/>
+          </div>
+        ))}
+      </div>
+
+      {/* HISTORY TABLE */}
+      <div className="card" style={{overflow:"hidden",marginBottom:20}}>
+        <div style={{background:DARK,color:"white",padding:"10px 16px"}} className="label-sm">Histórico completo</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead><tr style={{borderBottom:"1px solid #E0DDD8"}}>
+              {["Data","Peso","Gordura","Músculo","Água","Obs"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontFamily:"'Geist Mono',monospace",fontSize:8,letterSpacing:1,color:"#888",textTransform:"uppercase",fontWeight:400}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {[...evolution].reverse().map((e,i)=>(
+                <tr key={i} style={{borderBottom:"1px solid #F0EDE8",background:i%2===0?"white":"#FAFAF8"}}>
+                  <td style={{padding:"8px 12px",fontFamily:"'Geist Mono',monospace",color:"#888",whiteSpace:"nowrap"}}>{e.date}</td>
+                  <td style={{padding:"8px 12px",fontFamily:"'Geist Mono',monospace",fontWeight:500}}>{e.peso??"–"} kg</td>
+                  <td style={{padding:"8px 12px",fontFamily:"'Geist Mono',monospace",color:ACCENT}}>{e.gordura?e.gordura+"%":"–"}</td>
+                  <td style={{padding:"8px 12px",fontFamily:"'Geist Mono',monospace",color:GREEN}}>{e.musculo??"–"} kg</td>
+                  <td style={{padding:"8px 12px",fontFamily:"'Geist Mono',monospace",color:"#4A90A4"}}>{e.agua??"–"} kg</td>
+                  <td style={{padding:"8px 12px",fontSize:11,color:"#888",maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.obs||""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MEDIDAS */}
+      <div className="card" style={{overflow:"hidden",marginBottom:20}}>
+        <div style={{background:DARK,color:"white",padding:"10px 16px"}} className="label-sm">Medidas Antropométricas</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr style={{borderBottom:"1px solid #E0DDD8"}}>
+              {["Circunferência","Jan/26","Mar/26","Δ"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:"left",fontFamily:"'Geist Mono',monospace",fontSize:8,letterSpacing:1,color:"#888",textTransform:"uppercase",fontWeight:400}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {MEDIDAS.map((m,i)=>{const d=m.mar-m.jan;return(
+                <tr key={i} style={{borderBottom:"1px solid #F0EDE8",background:i%2===0?"white":"#FAFAF8"}}>
+                  <td style={{padding:"9px 12px",fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:500}}>{m.label}</td>
+                  <td style={{padding:"9px 12px",fontFamily:"'Geist Mono',monospace",fontSize:11,color:"#888"}}>{m.jan} {m.unit}</td>
+                  <td style={{padding:"9px 12px",fontFamily:"'Geist Mono',monospace",fontSize:11}}>{m.mar} {m.unit}</td>
+                  <td style={{padding:"9px 12px",fontFamily:"'Geist Mono',monospace",fontSize:11,color:d<0?GREEN:ACCENT,fontWeight:500}}>{d<0?"▼":"▲"} {Math.abs(d).toFixed(1)} {m.unit}</td>
+                </tr>
+              );})}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* AI INSIGHT */}
+      {config?.apiKey && (
+        <div className="card" style={{padding:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}}>
+            <div className="serif" style={{fontSize:17,fontWeight:600}}>📊 Diagnóstico IA</div>
+            <button className="btn-secondary" disabled={loadingInsight||evolution.length<2} onClick={generateInsight}>
+              {loadingInsight?"Analisando...":"Atualizar análise"}
+            </button>
+          </div>
+          {aiInsight
+            ? <div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.8,color:"#333",whiteSpace:"pre-wrap"}}>{aiInsight}</div>
+            : <div style={{fontSize:12,color:"#aaa",fontStyle:"italic"}}>Clique em "Atualizar análise" para gerar um diagnóstico com base nos seus dados.</div>
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── EXAMES TAB ───────────────────────────────────────────────────────────────
+function ExamesTab({config, exames, setExames}){
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState("");
+  const [note, setNote] = useState("");
+  const fileRef = useRef();
+
+  const handleFiles = (e) => {
+    const fs = Array.from(e.target.files);
+    fs.forEach(file=>{
+      const reader = new FileReader();
+      reader.onload = ev => setFiles(prev=>[...prev,{name:file.name,base64:ev.target.result.split(",")[1],type:file.type,src:ev.target.result}]);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const analyze = async () => {
+    if(!config?.apiKey||files.length===0)return;
+    setLoading(true);
+    setAnalysis("");
+    try{
+      const content=[
+        ...files.map(f=>({
+          type:f.type==="application/pdf"?"document":"image",
+          source:{type:"base64",media_type:f.type,data:f.base64}
+        })),
+        {type:"text",text:`Você é uma médica especializada em medicina esportiva e nutrologia. Analise estes exames de sangue de uma atleta maratonista.
+
+PERFIL:
+- Ana Clara, 36 anos, 170 cm, ~59 kg, 17,5% gordura
+- Meta: Sub-4h Maratona de Berlim (27/set/2025)
+- Treino: corrida 4x/sem + musculação 2x/sem (~40 km/semana)
+- Suplementos em uso: Ômega-3, Magnésio Quelato, CoQ10, Complexo B, Whey, Probiótico
+- Histórico: tendinopatia glútea e iliopsoas direito${note?`\n- Nota: ${note}`:""}
+
+INSTRUÇÕES:
+1. **Valores alterados** — liste cada exame fora do referencial com o valor encontrado vs referência
+2. **Impacto na performance** — como cada alteração afeta o treino de maratona
+3. **Impacto na recuperação** — tendões, músculo, sono
+4. **Suplementação** — ajustes recomendados com base nos resultados
+5. **Nutrição** — o que priorizar na dieta com base nos exames
+6. **Prioridade** — os 3 pontos mais urgentes para corrigir antes de Berlim
+7. **Solicitar novos exames** — se algum exame complementar seria útil
+
+Responda em português, seja específica e baseada nos valores dos exames.`}
+      ];
+      const text = await askClaude(config.apiKey,[{role:"user",content}],1500);
+      setAnalysis(text);
+      const entry={id:Date.now(),date:new Date().toLocaleDateString("pt-BR"),files:files.map(f=>f.name),note,analysis:text};
+      const updated=[entry,...exames];
+      setExames(updated);
+      LS.set("berlim_exames",updated);
+      if(config?.scriptUrl){
+        try{ await sheetsAppend(config.scriptUrl,"Exames",[entry.date,files.map(f=>f.name).join(", "),note,text.slice(0,500),new Date().toISOString()]); }catch{}
+      }
+    }catch(e){setAnalysis("Erro: "+e.message);}
+    setLoading(false);
+    setFiles([]);
+    setNote("");
+  };
+
+  return(
+    <div className="fadein">
+      <p className="serif" style={{fontSize:17,fontStyle:"italic",color:"#666",marginBottom:20,lineHeight:1.6}}>
+        Envie PDFs ou fotos dos seus exames de sangue. A IA extrai os valores e dá recomendações específicas para sua preparação para Berlim.
+      </p>
+
+      <div onClick={()=>fileRef.current.click()} style={{border:"2px dashed #D4CFC9",borderRadius:8,padding:"32px 20px",textAlign:"center",cursor:"pointer",background:"#FAFAF8",marginBottom:16,transition:"border-color 0.2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=ACCENT} onMouseLeave={e=>e.currentTarget.style.borderColor="#D4CFC9"}>
+        <div style={{fontSize:28,marginBottom:8}}>🩸</div>
+        <div className="label-sm">CLIQUE PARA ADICIONAR EXAMES</div>
+        <div style={{fontSize:11,color:"#aaa",marginTop:4}}>PDF ou foto · hemograma, ferritina, TSH, vit D, etc.</div>
+      </div>
+      <input ref={fileRef} type="file" accept=".pdf,image/*" multiple style={{display:"none"}} onChange={handleFiles}/>
+
+      {files.length>0&&(
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+          {files.map((f,i)=>(
+            <div key={i} style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:6,padding:"6px 10px",display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:11}}>{f.type.includes("pdf")?"📄":"🖼"} {f.name}</span>
+              <button onClick={()=>setFiles(p=>p.filter((_,j)=>j!==i))} style={{background:"none",border:"none",cursor:"pointer",color:ACCENT,fontSize:14,lineHeight:1}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Contexto adicional: sintomas, dúvidas específicas..."
+        style={{width:"100%",padding:"10px 12px",border:"1px solid #D4CFC9",borderRadius:6,fontSize:12,marginBottom:16,outline:"none",color:DARK}}/>
+
+      <button className="btn-primary" disabled={files.length===0||loading||!config?.apiKey} onClick={analyze} style={{marginBottom:8}}>
+        {loading?"Analisando exames...":!config?.apiKey?"Configure a API Key primeiro":`Analisar ${files.length>0?`(${files.length} arquivo${files.length>1?"s":""})`:""}`}
+      </button>
+
+      {loading&&<div style={{textAlign:"center",padding:32,color:"#888",fontFamily:"'Geist Mono',monospace",fontSize:11}}><div style={{fontSize:22,marginBottom:8,animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</div><br/>Lendo exames...</div>}
+
+      {analysis&&(
+        <div className="card fadein" style={{padding:22,marginTop:20}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <div style={{width:3,height:20,background:ACCENT,borderRadius:2}}/>
+            <div className="serif" style={{fontSize:18,fontWeight:600}}>Análise de Exames · {new Date().toLocaleDateString("pt-BR")}</div>
+          </div>
+          <div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.85,color:"#333",whiteSpace:"pre-wrap"}}>{analysis}</div>
+        </div>
+      )}
+
+      {exames.length>0&&(
+        <div style={{marginTop:28}}>
+          <div className="label-sm" style={{marginBottom:14}}>Histórico de análises</div>
+          {exames.map(e=>(
+            <details key={e.id} className="card" style={{marginBottom:10,overflow:"hidden"}}>
+              <summary style={{padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <span style={{color:ACCENT,fontSize:12}}>🩸 {e.files.join(", ")}</span>
+                <span style={{fontFamily:"'Geist Mono',monospace",fontSize:10,color:"#888"}}>{e.date}</span>
+              </summary>
+              <div style={{padding:"0 16px 16px"}}>
+                {e.note&&<div style={{fontSize:11,color:"#888",marginBottom:10,fontStyle:"italic"}}>{e.note}</div>}
+                <div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.8,color:"#444",whiteSpace:"pre-wrap"}}>{e.analysis}</div>
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PLANO TAB (DYNAMIC) ──────────────────────────────────────────────────────
+function PlanoTab({config, evolution, exames}){
+  const WEEK = [
+    {day:"Segunda",tag:"Corrida leve + ritmo",color:ACCENT,meals:[{time:"6h15",name:"Pré-treino",desc:"Banana + pão integral c/ mel. Café com cafeína (100–200 mg)."},{time:"8h30",name:"Café completo",desc:"2 ovos + pão integral + ricota + fruta."},{time:"12h30",name:"Almoço",desc:"Frango/peixe 120–150 g + arroz + feijão + salada + azeite."},{time:"16h",name:"Lanche",desc:"Iogurte grego 200 g + frutas vermelhas ou granola."},{time:"19h30",name:"Jantar",desc:"Salmão + batata-doce + brócolis. Reduzir carb simples."}]},
+    {day:"Terça",tag:"Musculação",color:GREEN,meals:[{time:"Pré",name:"Pré-musculação",desc:"Café completo se manhã. Fruta + iogurte 1h antes se ao meio-dia."},{time:"Pós",name:"Janela anabólica ≤40 min",desc:"Whey 25–30 g + banana. Obrigatório."},{time:"12h30",name:"Almoço",desc:"Proteína elevada. Arroz + feijão + vegetais + azeite."},{time:"19h30",name:"Jantar",desc:"Proteína + legumes. Manter proteína total ≥120 g/dia."}]},
+    {day:"Quarta",tag:"Descanso / leve",color:"#8A8A8A",meals:[{time:"8h",name:"Café da manhã",desc:"Ovos + fruta + café. Dia leve: menos carb, mais proteína e gordura boa."},{time:"12h30",name:"Almoço",desc:"Prato normal. Reduzir arroz, aumentar vegetais e proteína."},{time:"19h30",name:"Jantar",desc:"Leve: sopa de legumes com frango ou omelete."}]},
+    {day:"Quinta",tag:"Musculação",color:GREEN,meals:[{time:"Pré",name:"Pré-musculação",desc:"Igual terça — refeição completa ou lanche estratégico."},{time:"Pós",name:"Janela anabólica ≤40 min",desc:"Whey 25–30 g + carb simples. Não pular."},{time:"12h30",name:"Almoço/Jantar",desc:"Padrão com proteína elevada. Meta diária ≥120 g proteína."}]},
+    {day:"Sexta",tag:"Treino de tiro",color:GOLD,meals:[{time:"6h15",name:"Pré-tiro (obrigatório)",desc:"Carboidrato fácil digestão: banana + mel + café. Nunca em jejum."},{time:"8h30",name:"Pós + café",desc:"Ovos + queijo + pão integral ou tapioca + fruta."},{time:"12h30",name:"Almoço reforçado",desc:"Carb um pouco maior hoje. Arroz + feijão + proteína."}]},
+    {day:"Sábado",tag:"Descanso",color:"#8A8A8A",meals:[{time:"8h",name:"Café tranquilo",desc:"Sem pressão. Boa gordura: abacate, ovos, café."},{time:"13h",name:"Almoço",desc:"Refeição equilibrada. Bom momento para comida social."}]},
+    {day:"Domingo",tag:"Long run",color:ACCENT,meals:[{time:"6h–6h30",name:"Pré-long (60–90 min antes)",desc:"Aveia + banana + mel + iogurte grego. Cafeína se usar."},{time:"Durante",name:"Gel a cada 40–45 min",desc:"A partir de 45 min. Isotônico ou água a cada 20 min."},{time:"Pós (≤30 min)",name:"Recuperação — prioridade máxima",desc:"Whey 25–30 g + banana + eletrólito."},{time:"Almoço",name:"Almoço de recuperação",desc:"Sem déficit hoje. Arroz + feijão + proteína + vegetais."}]},
+  ];
+  const SUPPS = [
+    {name:"Ômega-3",dose:"2–3 g EPA+DHA/dia · com refeição",type:"existing",note:"Anti-inflamatório, suporte articular."},
+    {name:"Magnésio Quelato",dose:"300–400 mg · à noite",type:"existing",note:"Relaxamento muscular, sono, câimbras."},
+    {name:"CoQ10",dose:"100–200 mg · com refeição gordurosa",type:"existing",note:"Suporte mitocondrial."},
+    {name:"Complexo B",dose:"1 dose/dia · manhã",type:"existing",note:"Metabolismo energético."},
+    {name:"Whey Protein",dose:"25–30 g · pós-treino ≤40 min",type:"existing",note:"Após musculação e long run."},
+    {name:"Creatina",dose:"3–5 g/dia · qualquer horário",type:"adjust",note:"Preservar/ganhar massa. +0,5–1 kg retenção — normal."},
+    {name:"Cafeína",dose:"100–200 mg · 45–60 min pré-treino",type:"adjust",note:"Cortar 10–14 dias antes de Berlim."},
+    {name:"Gel Energético",dose:"1 gel a cada 40–45 min · >45 min",type:"race",note:"Testar AGORA. Para Berlim: 4–5 géis."},
+    {name:"Eletrólitos",dose:"Corridas >60 min e pós long run",type:"race",note:"Calor de SP — atenção ao sódio."},
+    {name:"Vitamina D + K2",dose:"2.000–5.000 UI + 100 mcg K2/dia",type:"adjust",note:"Verificar 25-OH-D sérico."},
+    {name:"Colágeno + Vit C",dose:"10–15 g + 200 mg vit C · 30 min pré-treino",type:"adjust",note:"Para tendíneas (iliopsoas, glúteo)."},
+    {name:"Probiótico (Simfort)",dose:"Conforme indicação",type:"existing",note:"Absorção e tolerância a géis."},
+  ];
+
+  const [activeDay, setActiveDay] = useState(0);
+  const [dynamicPlan, setDynamicPlan] = useState(LS.get("berlim_dynamic_plan",""));
+  const [loadingPlan, setLoadingPlan] = useState(false);
+  const suppColor = {existing:GREEN,adjust:ACCENT,race:GOLD};
+  const suppLabel = {existing:"Em uso",adjust:"Ajustar/Adicionar",race:"Race / Corrida"};
+
+  const generatePlan = async () => {
+    if(!config?.apiKey)return;
+    setLoadingPlan(true);
+    setDynamicPlan("");
+    try{
+      const latest = evolution[evolution.length-1]||{};
+      const hist = evolution.slice(-5).map(e=>`${e.date}: ${e.peso}kg, gordura ${e.gordura??"-"}%, músculo ${e.musculo??"-"}kg`).join("\n");
+      const lastExame = exames[0];
+      const text = await askClaude(config.apiKey,[{role:"user",content:`Você é uma nutricionista esportiva especializada em maratonas. Gere um plano alimentar e de suplementação ATUALIZADO para esta atleta.
+
+PERFIL: Ana Clara, 36 anos, 170 cm
+DADOS MAIS RECENTES: ${latest.peso??"-"}kg, ${latest.gordura??"-"}% gordura, ${latest.musculo??"-"}kg músculo
+META: Sub-4h Maratona de Berlim (27/set/2025)
+TREINO: 4x corrida + 2x musculação/semana, ~40 km/semana
+
+HISTÓRICO BIOIMPEDÂNCIA (últimas medições):
+${hist}
+
+${lastExame?`ÚLTIMO EXAME ANALISADO (${lastExame.date}):\n${lastExame.analysis.slice(0,600)}...`:"(sem exames registrados)"}
+
+Com base nesses dados atuais, forneça:
+1. **Ajuste de macros** — proteína/carb/gordura/calorias recomendados AGORA (com base no peso atual)
+2. **Mudanças no plano alimentar** — o que ajustar em relação ao plano base
+3. **Suplementação ajustada** — alguma mudança com base na bioimpedância/exames?
+4. **Foco nutricional dos próximos 30 dias** — 3 prioridades específicas
+5. **Alerta** — algo que precisa de atenção imediata
+
+Seja específica e baseada nos dados reais. Responda em português.`}],1200);
+      setDynamicPlan(text);
+      LS.set("berlim_dynamic_plan",text);
+    }catch(e){setDynamicPlan("Erro: "+e.message);}
+    setLoadingPlan(false);
+  };
+
+  return(
+    <div className="fadein">
+      {/* DYNAMIC PLAN CARD */}
+      {config?.apiKey&&(
+        <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:8,padding:20,marginBottom:28}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:dynamicPlan?14:0}}>
+            <div>
+              <div className="serif" style={{fontSize:18,fontWeight:600}}>🧬 Plano Dinâmico</div>
+              <div style={{fontSize:11,color:"#6B5010",marginTop:2}}>Atualizado com seus dados mais recentes</div>
+            </div>
+            <button className="btn-secondary" disabled={loadingPlan} onClick={generatePlan} style={{borderColor:"#D4B86A",color:"#6B5010"}}>
+              {loadingPlan?"Gerando...":"Atualizar plano"}
+            </button>
+          </div>
+          {loadingPlan&&<div style={{textAlign:"center",padding:20,color:"#888",fontSize:11}}><div style={{animation:"spin 1s linear infinite",display:"inline-block",marginRight:8}}>⟳</div>Analisando seus dados...</div>}
+          {dynamicPlan&&<div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.85,color:"#4A3200",whiteSpace:"pre-wrap"}}>{dynamicPlan}</div>}
+          {!dynamicPlan&&!loadingPlan&&<div style={{fontSize:12,color:"#9A8050",fontStyle:"italic"}}>Clique em "Atualizar plano" para gerar recomendações personalizadas com base nas suas medições e exames.</div>}
+        </div>
+      )}
+
+      {/* MACROS BASE */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:24}}>
+        {[{label:"Proteína",value:"118–130 g",sub:"2,0–2,2 g/kg",color:ACCENT},{label:"Carboidrato",value:"210–240 g",sub:"3,5–4,0 g/kg",color:GOLD},{label:"Gordura",value:"55–65 g",sub:"1,0 g/kg",color:GREEN},{label:"Calorias",value:"~1.900 kcal",sub:"déficit suave",color:DARK}].map(m=>(
+          <div key={m.label} className="card" style={{borderTop:`3px solid ${m.color}`,padding:"14px 12px"}}>
+            <div className="label-sm" style={{marginBottom:4}}>{m.label}</div>
+            <div className="serif" style={{fontSize:20,fontWeight:600,color:DARK,lineHeight:1}}>{m.value}</div>
+            <div style={{fontSize:10,color:"#888",marginTop:3}}>{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* DAY SELECTOR */}
+      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:18}}>
+        {WEEK.map((d,i)=>(
+          <button key={i} onClick={()=>setActiveDay(i)} style={{padding:"7px 11px",borderRadius:20,background:activeDay===i?d.color:"white",color:activeDay===i?"white":"#555",border:`1px solid ${activeDay===i?d.color:"#D4CFC9"}`,fontFamily:"'Geist Mono',monospace",fontSize:10,letterSpacing:1,cursor:"pointer",transition:"all 0.15s"}}>{d.day.slice(0,3)}</button>
+        ))}
+      </div>
+
+      {/* ACTIVE DAY */}
+      {(()=>{
+        const d=WEEK[activeDay];
+        return(
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+              <div style={{background:d.color,color:"white",padding:"4px 12px",borderRadius:4,fontFamily:"'Geist Mono',monospace",fontSize:10,letterSpacing:1}}>{d.day}</div>
+              <div className="serif" style={{fontSize:16,fontStyle:"italic",color:"#666"}}>{d.tag}</div>
+            </div>
+            <div className="card" style={{overflow:"hidden"}}>
+              {d.meals.map((m,i)=>(
+                <div key={i} style={{display:"grid",gridTemplateColumns:"70px 1fr",borderBottom:i<d.meals.length-1?"1px solid #F0EDE8":"none",background:i%2===0?"white":"#FAFAF8"}}>
+                  <div style={{padding:"12px 8px",borderRight:"1px solid #F0EDE8",fontFamily:"'Geist Mono',monospace",fontSize:9,color:d.color,display:"flex",alignItems:"flex-start",paddingTop:14}}>{m.time}</div>
+                  <div style={{padding:"12px 14px"}}>
+                    <div className="serif" style={{fontSize:15,fontWeight:500,marginBottom:3}}>{m.name}</div>
+                    <div style={{fontSize:11,color:"#666",lineHeight:1.5}}>{m.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(d.day==="Domingo"||d.day==="Sexta")&&<div style={{background:"#FFE8E0",border:"1px solid #F5C5B0",borderRadius:6,padding:"10px 14px",marginTop:10,fontSize:11,color:"#8B3A1E"}}>⚠ Dia intenso — nunca em jejum. Carb antes, proteína imediatamente após.</div>}
+          </div>
+        );
+      })()}
+
+      {/* SUPPS */}
+      <div style={{marginTop:28}}>
+        <div className="label-sm" style={{marginBottom:14}}>Suplementação Base</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          {Object.entries(suppLabel).map(([k,v])=>(
+            <div key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#555"}}>
+              <div style={{width:8,height:8,borderRadius:2,background:suppColor[k]}}/>
+              <span style={{fontFamily:"'Geist Mono',monospace",fontSize:9}}>{v}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
+          {SUPPS.map((s,i)=>(
+            <div key={i} className="card" style={{borderTop:`3px solid ${suppColor[s.type]}`,padding:16}}>
+              <div className="serif" style={{fontSize:16,fontWeight:600,marginBottom:3}}>{s.name}</div>
+              <div style={{fontFamily:"'Geist Mono',monospace",fontSize:9,color:suppColor[s.type],letterSpacing:1,marginBottom:8,lineHeight:1.5}}>{s.dose}</div>
+              <div style={{fontSize:11,color:"#666",lineHeight:1.5}}>{s.note}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TREINOS TAB ──────────────────────────────────────────────────────────────
+function TreinosTab({config, workouts, setWorkouts}){
+  const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState("");
+  const [aiTarget, setAiTarget] = useState(null);
+  const fileRef = useRef();
+
+  const handleFiles = useCallback(async(e)=>{
+    const files=Array.from(e.target.files);
+    for(const file of files){
+      const text=await file.text();
+      let pts=[];
+      if(file.name.endsWith(".gpx"))pts=parseGPX(text);
+      else if(file.name.endsWith(".tcx"))pts=parseTCX(text);
+      else continue;
+      const s=buildSummary(pts,file.name);
+      if(s){
+        setWorkouts(prev=>{
+          if(prev.find(w=>w.filename===s.filename&&w.date===s.date))return prev;
+          const updated=[s,...prev].sort((a,b)=>new Date(b.date.split("/").reverse().join("-"))-new Date(a.date.split("/").reverse().join("-")));
+          LS.set("berlim_workouts_v2",updated);
+          return updated;
+        });
+        if(config?.scriptUrl){
+          try{ await sheetsAppend(config.scriptUrl,"Treinos",[s.date,s.filename,s.distKm.toFixed(2),fmtTime(s.totalSecs),fmtPace(s.avgPace),s.avgHr||"",s.avgCad||"",s.elevGain,new Date().toISOString()]); }catch{}
+        }
+      }
+    }
+    fileRef.current.value="";
+  },[config,setWorkouts]);
+
+  const analyzeWorkout = async(w)=>{
+    if(!config?.apiKey)return;
+    setAiTarget(w.filename);setAnalysis("");setLoading(true);
+    const splits=w.splits.map(s=>`  Km ${s.km}${s.partial?" (parcial)":""}: ${fmtPace(s.pace)}/km`).join("\n");
+    try{
+      const text=await askClaude(config.apiKey,[{role:"user",content:`Treinador de corrida especializado em maratonistas. Analise este treino.
+
+ATLETA: Ana Clara, 36a, 59kg, 170cm. Meta: Sub-4h Berlim (27/set/2025), pace alvo 5:41/km. Volume ~40km/sem. Histórico: tendinopatia glútea e iliopsoas.
+
+TREINO: ${w.filename} | ${w.date} | ${w.distKm.toFixed(2)}km | ${fmtTime(w.totalSecs)} | Pace médio: ${fmtPace(w.avgPace)}/km${w.avgHr?` | FC: ${w.avgHr}bpm`:""}${w.avgCad?` | Cad: ${w.avgCad}ppm`:""}
+Elevação: +${w.elevGain}m
+
+SPLITS:
+${splits}
+
+Responda em português:
+1. **Diagnóstico** — tipo e qualidade
+2. **Pace** — consistência, positive/negative split
+3. **FC e cadência** (se disponível)
+4. **Pontos fortes**
+5. **Pontos de atenção** para sub-4h
+6. **Pace recomendado** para próximo treino similar
+7. **Uma coisa** para focar no próximo treino`}]);
+      setAnalysis(text);
+    }catch(e){setAnalysis("Erro: "+e.message);}
+    setLoading(false);
+  };
+
+  const analyzeAll = async()=>{
+    if(!config?.apiKey||workouts.length===0)return;
+    setAiTarget("all");setAnalysis("");setLoading(true);
+    const sum=workouts.slice(0,10).map(w=>`- ${w.date} | ${w.distKm.toFixed(1)}km | ${fmtPace(w.avgPace)}/km | ${fmtTime(w.totalSecs)}${w.avgHr?` | FC:${w.avgHr}`:""}`).join("\n");
+    try{
+      const text=await askClaude(config.apiKey,[{role:"user",content:`Treinador de corrida. Analise evolução desta atleta.
+
+PERFIL: Ana Clara, 36a, 59kg. Meta Sub-4h Berlim 27/set/2025. Pace alvo: 5:41/km. ~40km/sem.
+
+HISTÓRICO (mais recente primeiro):
+${sum}
+
+Responda em português:
+1. **Tendência de pace**
+2. **Volume e distribuição**
+3. **Estimativa de tempo** de maratona hoje
+4. **Gap para sub-4h** e tempo para fechar
+5. **3 recomendações** para as próximas 4 semanas
+6. **Treino-chave** mais impactante`}]);
+      setAnalysis(text);
+    }catch(e){setAnalysis("Erro: "+e.message);}
+    setLoading(false);
+  };
+
+  const SplitsChart=({splits})=>{
+    if(!splits||splits.length<2)return null;
+    const pcs=splits.map(s=>s.pace),mn=Math.min(...pcs)*0.97,mx=Math.max(...pcs)*1.03,w=260,h=55,p=6,tgt=5*60+41;
+    return(
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{display:"block"}}>
+        <line x1={p} y1={h-p-((tgt-mn)/(mx-mn))*(h-p*2)} x2={w-p} y2={h-p-((tgt-mn)/(mx-mn))*(h-p*2)} stroke={ACCENT} strokeWidth="0.8" strokeDasharray="3,3" opacity="0.6"/>
+        {splits.map((s,i)=>{
+          const x=p+(i/(splits.length-1))*(w-p*2),y=h-p-((s.pace-mn)/(mx-mn))*(h-p*2);
+          return(<g key={i}>{i>0&&(()=>{const px=p+((i-1)/(splits.length-1))*(w-p*2),py=h-p-((splits[i-1].pace-mn)/(mx-mn))*(h-p*2);return<line x1={px} y1={py} x2={x} y2={y} stroke="#ccc" strokeWidth="1"/>;})()}<circle cx={x} cy={y} r={3} fill={paceColor(s.pace)}/></g>);
+        })}
+        <text x={w-p} y={h-p-((tgt-mn)/(mx-mn))*(h-p*2)-3} textAnchor="end" fill={ACCENT} fontSize="7" fontFamily="monospace">5:41</text>
+      </svg>
+    );
+  };
+
+  return(
+    <div className="fadein">
+      <div style={{marginBottom:22}}>
+        <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:6,padding:"10px 14px",marginBottom:14,fontSize:11,color:"#6B5010"}}>
+          <strong>Exportar do Garmin Connect:</strong> App → Atividade → ⋯ → Exportar GPX · ou · connect.garmin.com → atividade → engrenagem → Exportar GPX
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button className="btn-primary" onClick={()=>fileRef.current.click()}>+ Upload .gpx / .tcx</button>
+          {workouts.length>1&&<button style={{background:ACCENT,color:"white",border:"none",borderRadius:6,padding:"12px 18px",fontFamily:"'Geist Mono',monospace",fontSize:10,letterSpacing:1,textTransform:"uppercase",cursor:loading?"not-allowed":"pointer",opacity:loading?0.6:1}} disabled={loading||!config?.apiKey} onClick={analyzeAll}>{loading&&aiTarget==="all"?"Analisando...":"Analisar evolução"}</button>}
+          {workouts.length>0&&<button className="btn-danger" onClick={()=>{if(confirm("Apagar todos os treinos?")){{setWorkouts([]);LS.set("berlim_workouts_v2",[]);}}}}>Limpar</button>}
+        </div>
+        <input ref={fileRef} type="file" accept=".gpx,.tcx" multiple style={{display:"none"}} onChange={handleFiles}/>
+      </div>
+
+      {workouts.length>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:20}}>
+          {[{l:"Treinos",v:workouts.length},{l:"Km total",v:workouts.reduce((a,w)=>a+w.distKm,0).toFixed(1)+" km"},{l:"Pace médio",v:fmtPace(workouts.reduce((a,w)=>a+w.avgPace,0)/workouts.length)+"/km"},{l:"Alvo sub-4h",v:"5:41/km",h:true}].map(s=>(
+            <div key={s.l} className="card" style={{padding:"10px 12px",background:s.h?"#FFE8E0":"white",borderColor:s.h?"#F5C5B0":"#E0DDD8"}}>
+              <div className="label-sm" style={{marginBottom:3}}>{s.l}</div>
+              <div className="serif" style={{fontSize:18,fontWeight:600,color:s.h?ACCENT:DARK}}>{s.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {workouts.length===0?(
+        <div style={{textAlign:"center",padding:"50px 20px",color:"#aaa"}}>
+          <div style={{fontSize:36,marginBottom:10}}>🏃</div>
+          <div className="label-sm">Nenhum treino carregado</div>
+          <div style={{fontSize:12,marginTop:6}}>Faça upload de arquivos .gpx ou .tcx</div>
+        </div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
+          {workouts.map(w=>(
+            <div key={w.filename} className="card" style={{overflow:"hidden"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr auto",alignItems:"start",padding:"14px 16px 10px",gap:8}}>
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
+                    <div style={{width:7,height:7,borderRadius:"50%",background:paceColor(w.avgPace),flexShrink:0}}/>
+                    <div className="serif" style={{fontSize:16,fontWeight:600}}>{w.distKm.toFixed(2)} km · {fmtTime(w.totalSecs)}</div>
+                    <div style={{fontFamily:"'Geist Mono',monospace",fontSize:9,color:"#888"}}>{w.date}</div>
+                  </div>
+                  <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+                    {[{l:"Pace",v:fmtPace(w.avgPace)+"/km",c:paceColor(w.avgPace)},w.avgHr&&{l:"FC",v:w.avgHr+" bpm",c:"#4A90A4"},w.avgCad&&{l:"Cad",v:w.avgCad+" ppm",c:GREEN},{l:"Elev",v:"+"+w.elevGain+"m",c:"#888"}].filter(Boolean).map(f=>(
+                      <div key={f.l}>
+                        <div style={{fontFamily:"'Geist Mono',monospace",fontSize:8,color:"#aaa",letterSpacing:1,textTransform:"uppercase"}}>{f.l}</div>
+                        <div style={{fontFamily:"'Geist Mono',monospace",fontSize:12,color:f.c,fontWeight:500}}>{f.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                  <button onClick={()=>analyzeWorkout(w)} disabled={loading||!config?.apiKey} style={{background:loading&&aiTarget===w.filename?"#eee":DARK,color:loading&&aiTarget===w.filename?"#888":"white",border:"none",borderRadius:4,padding:"7px 12px",fontFamily:"'Geist Mono',monospace",fontSize:9,letterSpacing:1,textTransform:"uppercase",cursor:loading?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
+                    {loading&&aiTarget===w.filename?"...":config?.apiKey?"Analisar":"—"}
+                  </button>
+                  <button onClick={()=>{const u=workouts.filter(x=>x.filename!==w.filename);setWorkouts(u);LS.set("berlim_workouts_v2",u);}} style={{background:"none",border:"none",color:"#ccc",fontSize:10,cursor:"pointer",fontFamily:"'Geist Mono',monospace"}}>remover</button>
+                </div>
+              </div>
+              {w.splits&&w.splits.length>1&&(
+                <div style={{padding:"0 16px 12px"}}>
+                  <div className="label-sm" style={{marginBottom:3}}>Splits por km</div>
+                  <SplitsChart splits={w.splits}/>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:6}}>
+                    {w.splits.map(s=><div key={s.km} style={{background:"#F7F3EE",borderRadius:3,padding:"2px 6px",fontFamily:"'Geist Mono',monospace",fontSize:9,color:paceColor(s.pace)}}>{s.km}{s.partial?"*":""} · {fmtPace(s.pace)}</div>)}
+                  </div>
+                </div>
+              )}
+              {loading&&aiTarget===w.filename&&<div style={{padding:"10px 16px",borderTop:"1px solid #F0EDE8",fontFamily:"'Geist Mono',monospace",fontSize:10,color:"#888"}}>Analisando...</div>}
+              {!loading&&aiTarget===w.filename&&analysis&&(
+                <div style={{padding:"14px 16px",borderTop:"1px solid #F0EDE8",background:"#FAFAF8"}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                    <div style={{width:3,height:14,background:ACCENT,borderRadius:2}}/><div className="label-sm" style={{color:ACCENT}}>Análise IA</div>
+                  </div>
+                  <div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.8,color:"#333",whiteSpace:"pre-wrap"}}>{analysis}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading&&aiTarget==="all"&&analysis&&(
+        <div className="card fadein" style={{borderLeft:`4px solid ${ACCENT}`,padding:20,marginTop:8}}>
+          <div className="serif" style={{fontSize:17,fontWeight:600,marginBottom:10}}>Análise de Evolução · Sub-4h Berlim</div>
+          <div style={{fontFamily:"'Geist Mono',monospace",fontSize:11,lineHeight:1.8,color:"#333",whiteSpace:"pre-wrap"}}>{analysis}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── COUNTDOWN TAB ────────────────────────────────────────────────────────────
+function CountdownTab(){
+  const [now, setNow] = useState(new Date());
+  useEffect(()=>{const id=setInterval(()=>setNow(new Date()),1000);return()=>clearInterval(id);},[]);
+
+  const diff=Math.max(0,RACE_DATE-now);
+  const days=Math.floor(diff/(1000*60*60*24));
+  const hours=Math.floor((diff%(1000*60*60*24))/(1000*60*60));
+  const mins=Math.floor((diff%(1000*60*60))/(1000*60));
+  const secs=Math.floor((diff%(1000*60))/1000);
+  const totalDays=Math.ceil((RACE_DATE-new Date("2025-01-06"))/(1000*60*60*24));
+  const pct=Math.min(100,Math.round(((totalDays-days)/totalDays)*100));
+
+  const PHASES=[
+    {name:"Base I",weeks:"Mai–Jun",volume:"40–45 km/sem",focus:"Volume aeróbico, paces confortáveis",sessions:["Seg: Leve 8–10km Z2","Ter: Musculação","Qui: Musculação","Sex: Tiro 6–8km","Dom: Long run 18–22km"],start:new Date("2025-05-01"),end:new Date("2025-06-30")},
+    {name:"Base II",weeks:"Jul",volume:"50–55 km/sem",focus:"Aumentar volume, introduzir progressivos",sessions:["Seg: Leve 10km Z2","Ter: Musculação","Qui: Musculação","Sex: Progressivo 10km","Dom: Long run 24–26km"],start:new Date("2025-07-01"),end:new Date("2025-07-31")},
+    {name:"Específico",weeks:"Ago",volume:"55–60 km/sem",focus:"Treinos no pace alvo 5:41",sessions:["Seg: Leve 10km","Ter: Musculação (carga reduzida)","Qui: Ritmo 12km a 5:41","Sex: Tiros 10×400m","Dom: Long run 28–32km c/ pace"],start:new Date("2025-08-01"),end:new Date("2025-08-31")},
+    {name:"Polimento",weeks:"Set 1–21",volume:"30–35 km/sem",focus:"Reduzir volume, manter intensidade",sessions:["Seg: Leve 8km","Ter: Strides + mobilidade","Qui: 6km a pace maratona","Sex: Leve 6km","Dom: Long run 16km"],start:new Date("2025-09-01"),end:new Date("2025-09-21")},
+    {name:"Race Week",weeks:"Set 22–27",volume:"10–15 km/sem",focus:"Frescor máximo. Foco mental.",sessions:["Seg: 5km leve","Ter: 4×100m strides","Qua–Sex: Descanso","Sáb: Chegada em Berlim 🛫","Dom 27/set: MARATONA 🏁"],start:new Date("2025-09-22"),end:RACE_DATE},
+  ];
+  const currentPhase=PHASES.findLastIndex(p=>now>=p.start);
+
+  return(
+    <div className="fadein">
+      <div style={{background:DARK,borderRadius:12,padding:"28px 20px",marginBottom:24,textAlign:"center"}}>
+        <div className="label-sm" style={{color:ACCENT,marginBottom:14}}>Maratona de Berlim · 27 Setembro 2025</div>
+        <div style={{display:"flex",justifyContent:"center",gap:"clamp(10px,5vw,36px)",marginBottom:18,flexWrap:"wrap"}}>
+          {[{v:days,l:"dias"},{v:hours,l:"horas"},{v:mins,l:"min"},{v:secs,l:"seg"}].map(({v,l})=>(
+            <div key={l} style={{textAlign:"center"}}>
+              <div className="serif" style={{fontSize:"clamp(38px,9vw,66px)",fontWeight:600,color:"white",lineHeight:1,minWidth:"clamp(48px,10vw,80px)"}}>{String(v).padStart(2,"0")}</div>
+              <div className="label-sm" style={{color:"#666",marginTop:4}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{maxWidth:360,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#666",fontFamily:"'Geist Mono',monospace",marginBottom:5}}><span>Preparação</span><span>{pct}%</span></div>
+          <div style={{background:"#333",borderRadius:4,height:5,overflow:"hidden"}}><div style={{background:ACCENT,width:`${pct}%`,height:"100%",transition:"width 1s ease"}}/></div>
+        </div>
+      </div>
+
+      <div className="label-sm" style={{marginBottom:14}}>Periodização</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:28}}>
+        {PHASES.map((ph,i)=>{
+          const isCur=i===currentPhase,isPast=i<currentPhase;
+          return(
+            <div key={ph.name} style={{background:"white",border:`1px solid ${isCur?ACCENT:"#E0DDD8"}`,borderLeft:`4px solid ${isCur?ACCENT:isPast?GREEN:"#D4CFC9"}`,borderRadius:8,padding:"14px 16px",opacity:isPast?0.7:1}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:6}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {isCur&&<div style={{background:ACCENT,color:"white",fontFamily:"'Geist Mono',monospace",fontSize:7,letterSpacing:1,padding:"2px 7px",borderRadius:3}}>AGORA</div>}
+                  {isPast&&<span style={{color:GREEN,fontSize:12}}>✓</span>}
+                  <div className="serif" style={{fontSize:17,fontWeight:600}}>{ph.name}</div>
+                  <div style={{fontFamily:"'Geist Mono',monospace",fontSize:9,color:"#888"}}>{ph.weeks}</div>
+                </div>
+                <div style={{fontFamily:"'Geist Mono',monospace",fontSize:10,color:"#888"}}>{ph.volume}</div>
+              </div>
+              <div style={{fontSize:11,color:"#666",marginBottom:8}}>{ph.focus}</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {ph.sessions.map((s,j)=><div key={j} style={{background:"#F7F3EE",border:"1px solid #E8E4DF",borderRadius:3,padding:"2px 7px",fontFamily:"'Geist Mono',monospace",fontSize:9,color:"#555"}}>{s}</div>)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{background:"#F0E8D0",border:"1px solid #D4B86A",borderRadius:8,padding:18}}>
+        <div className="serif" style={{fontSize:16,fontWeight:600,marginBottom:12}}>🏁 Checklist Race Day</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:7}}>
+          {["Tênis testados (≥300 km)","Meias anti-bolha testadas","Shorts/top testados","Vaselina / anti-atrito","4–5 géis (sabores testados)","Isotônico nas garrafinhas","Cafeína cortada 10–14 dias antes","Carga de carb D-3 a D-1","Jantar D-1: macarrão + frango","Café D-0: 3h antes, testado","GPS carregado com rota","Passaporte + chip de corrida"].map((item,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"flex-start",gap:7,fontSize:11,color:"#5A4010",lineHeight:1.4}}>
+              <span style={{color:GOLD,marginTop:1,flexShrink:0}}>□</span><span>{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFIG TAB ───────────────────────────────────────────────────────────────
+function ConfigTab({config, onUpdate}){
+  const [scriptUrl, setScriptUrl] = useState(config?.scriptUrl||"");
+  const [apiKey, setApiKey] = useState(config?.apiKey||"");
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    onUpdate({scriptUrl,apiKey});
+    setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+  };
+
+  return(
+    <div className="fadein">
+      <div className="card" style={{padding:24,marginBottom:16}}>
+        <div className="serif" style={{fontSize:18,fontWeight:600,marginBottom:16}}>Google Sheets</div>
+        <div style={{fontSize:12,color:"#666",lineHeight:1.7,marginBottom:16}}>
+          Seus dados ficam salvos na sua planilha Google. Acesse de qualquer dispositivo.<br/>
+          <a href="https://script.google.com" target="_blank" style={{color:ACCENT}}>script.google.com</a> → Novo projeto → cole o código do setup inicial.
+        </div>
+        <div className="label-sm" style={{marginBottom:5}}>URL do Web App (Apps Script)</div>
+        <input value={scriptUrl} onChange={e=>setScriptUrl(e.target.value)} placeholder="https://script.google.com/macros/s/.../exec"
+          style={{width:"100%",padding:"10px 12px",border:"1px solid #D4CFC9",borderRadius:6,fontSize:11,marginBottom:16,outline:"none"}}/>
+        <div style={{fontSize:11,color:"#888"}}>Status: {scriptUrl?<span style={{color:GREEN}}>✓ Configurado</span>:<span style={{color:"#aaa"}}>Não configurado</span>}</div>
+      </div>
+
+      <div className="card" style={{padding:24,marginBottom:16}}>
+        <div className="serif" style={{fontSize:18,fontWeight:600,marginBottom:16}}>API Anthropic</div>
+        <div style={{fontSize:12,color:"#666",lineHeight:1.7,marginBottom:16}}>
+          Necessária para análise de treinos, exames e plano dinâmico.<br/>
+          Obtenha em <a href="https://console.anthropic.com" target="_blank" style={{color:ACCENT}}>console.anthropic.com</a> → API Keys.<br/>
+          Fica salva <strong>só no seu navegador</strong>.
+        </div>
+        <div className="label-sm" style={{marginBottom:5}}>Chave da API</div>
+        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-ant-api03-..."
+          style={{width:"100%",padding:"10px 12px",border:"1px solid #D4CFC9",borderRadius:6,fontSize:11,marginBottom:16,outline:"none"}}/>
+        <div style={{fontSize:11,color:"#888"}}>Status: {apiKey?<span style={{color:GREEN}}>✓ Configurada</span>:<span style={{color:"#aaa"}}>Não configurada</span>}</div>
+      </div>
+
+      <button className="btn-primary" onClick={save} style={{width:"100%"}}>
+        {saved?"✓ Salvo!":"Salvar configurações"}
+      </button>
+
+      <div style={{marginTop:24,padding:16,background:"#FFF8F0",border:"1px solid #F5D5C0",borderRadius:8,fontSize:11,color:"#8B4010",lineHeight:1.7}}>
+        <strong>Sobre seus dados:</strong><br/>
+        • Bioimpedância, treinos e análises são salvos no localStorage do navegador (offline)<br/>
+        • Se configurar o Google Sheets, cada entrada também é enviada para sua planilha<br/>
+        • A chave de API fica só no seu dispositivo — nunca é enviada para outros servidores<br/>
+        • Para acessar em outro dispositivo, configure o Sheets e a API Key novamente
+      </div>
+    </div>
+  );
+}
+
+// ─── APP ROOT ─────────────────────────────────────────────────────────────────
+function App(){
+  const [tab, setTab] = useState("evolucao");
+  const [config, setConfig] = useState(()=>LS.get(SHEETS_KEY,null));
+  const [showSetup, setShowSetup] = useState(false);
+  const [evolution, setEvolution] = useState(()=>LS.get("berlim_evolution_v2",[
+    {date:"06/01",peso:59.8,gordura:17.3,musculo:26.9,agua:35.5,massaGorda:10.3,mlg:49.5,obs:""},
+    {date:"11/02",peso:58.4,gordura:null,musculo:25.9,agua:34.0,massaGorda:11.7,mlg:46.7,obs:""},
+    {date:"11/03",peso:59.1,gordura:17.5,musculo:26.4,agua:34.7,massaGorda:10.3,mlg:48.8,obs:""},
+  ]));
+  const [exames, setExames] = useState(()=>LS.get("berlim_exames",[]));
+  const [workouts, setWorkouts] = useState(()=>LS.get("berlim_workouts_v2",[]));
+
+  const saveConfig = (cfg) => { setConfig(cfg); LS.set(SHEETS_KEY,cfg); setShowSetup(false); };
+
+  const TABS = [
+    {id:"evolucao",label:"Evolução",icon:"📈"},
+    {id:"plano",label:"Plano",icon:"🥗"},
+    {id:"treinos",label:"Treinos",icon:"🏃"},
+    {id:"exames",label:"Exames",icon:"🩸"},
+    {id:"countdown",label:"Berlim",icon:"🏁"},
+    {id:"config",label:"Config",icon:"⚙️"},
+  ];
+
+  return(
+    <div style={{fontFamily:"'Geist Mono',monospace",background:"#F7F3EE",minHeight:"100vh",paddingBottom:70}}>
+      {showSetup&&<SetupModal config={config} onSave={saveConfig}/>}
+
+      {/* HEADER */}
+      <div style={{background:DARK,color:"white",padding:"22px 16px 0",position:"sticky",top:0,zIndex:100}}>
+        <div style={{maxWidth:860,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+            <div>
+              <div className="label-sm" style={{color:ACCENT,marginBottom:4}}>Maratona de Berlim · 27 Set 2025 · Sub-4h</div>
+              <div className="serif" style={{fontSize:"clamp(18px,4vw,26px)",fontWeight:300}}>Projeto <em style={{fontStyle:"italic",color:"#E8D5C8"}}>Ana Clara</em></div>
+            </div>
+            {!config&&<button onClick={()=>setShowSetup(true)} style={{background:ACCENT,color:"white",border:"none",borderRadius:6,padding:"8px 14px",fontFamily:"'Geist Mono',monospace",fontSize:9,letterSpacing:1,textTransform:"uppercase",cursor:"pointer",whiteSpace:"nowrap",marginTop:4}}>Setup →</button>}
+          </div>
+          {/* DESKTOP TABS */}
+          <div style={{display:"flex",gap:0,overflowX:"auto",marginTop:12}}>
+            {TABS.map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"9px 14px",background:tab===t.id?"#F7F3EE":"transparent",color:tab===t.id?DARK:"#888",border:"none",borderRadius:"6px 6px 0 0",fontFamily:"'Geist Mono',monospace",fontSize:9,letterSpacing:1,textTransform:"uppercase",cursor:"pointer",whiteSpace:"nowrap",transition:"all 0.15s"}}>
+                <span style={{marginRight:5}}>{t.icon}</span>{t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* CONTENT */}
+      <div style={{maxWidth:860,margin:"0 auto",padding:"24px 16px 40px"}}>
+        {tab==="evolucao"&&<EvolucaoTab config={config} evolution={evolution} setEvolution={setEvolution}/>}
+        {tab==="plano"&&<PlanoTab config={config} evolution={evolution} exames={exames}/>}
+        {tab==="treinos"&&<TreinosTab config={config} workouts={workouts} setWorkouts={setWorkouts}/>}
+        {tab==="exames"&&<ExamesTab config={config} exames={exames} setExames={setExames}/>}
+        {tab==="countdown"&&<CountdownTab/>}
+        {tab==="config"&&<ConfigTab config={config} onUpdate={saveConfig}/>}
+      </div>
+
+      {/* MOBILE BOTTOM NAV */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:DARK,borderTop:"1px solid #333",display:"flex",zIndex:200}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 4px 12px",background:"transparent",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,color:tab===t.id?"white":"#666",transition:"color 0.15s"}}>
+            <span style={{fontSize:16}}>{t.icon}</span>
+            <span style={{fontFamily:"'Geist Mono',monospace",fontSize:7,letterSpacing:0.5,textTransform:"uppercase"}}>{t.label}</span>
+            {tab===t.id&&<div style={{width:4,height:4,background:ACCENT,borderRadius:"50%"}}/>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+  </script>
+</body>
+</html>
