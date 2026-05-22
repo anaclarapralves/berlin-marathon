@@ -61,23 +61,18 @@ const ANTHRO_KEY = "berlim_anthropic_key";
 // User deploys a simple Apps Script that acts as a REST proxy
 
 async function sheetsRead(scriptUrl, sheet) {
-  const r = await fetch(`${scriptUrl}?action=read&sheet=${sheet}`);
+  const url = `${scriptUrl}?action=read&sheet=${encodeURIComponent(sheet)}`;
+  const r = await fetch(url);
   return r.json();
 }
 async function sheetsAppend(scriptUrl, sheet, row) {
-  const r = await fetch(scriptUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "append", sheet, row }),
-  });
+  const url = `${scriptUrl}?action=append&sheet=${encodeURIComponent(sheet)}&row=${encodeURIComponent(JSON.stringify(row))}`;
+  const r = await fetch(url);
   return r.json();
 }
 async function sheetsUpdate(scriptUrl, sheet, rowIndex, row) {
-  const r = await fetch(scriptUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "update", sheet, rowIndex, row }),
-  });
+  const url = `${scriptUrl}?action=update&sheet=${encodeURIComponent(sheet)}&rowIndex=${rowIndex}&row=${encodeURIComponent(JSON.stringify(row))}`;
+  const r = await fetch(url);
   return r.json();
 }
 
@@ -1055,7 +1050,7 @@ function ConfigTab({config, onUpdate}){
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 function App(){
   const [tab, setTab] = useState("evolucao");
-  const [config, setConfig] = useState(()=>LS.get(SHEETS_KEY,LS.get(SHEETS_KEY,{scriptUrl:"https://script.google.com/macros/s/AKfycbzlCyaER1mGQ8P3Jk0Xp_6iXAv--i7HsCe5ciI4GWmuM81pEPlJNEBERIoE5sMqthtV/exec",apiKey:""})));
+  const [config, setConfig] = useState(()=>LS.get(SHEETS_KEY,{scriptUrl:"https://script.google.com/macros/s/AKfycbzlCyaER1mGQ8P3Jk0Xp_6iXAv--i7HsCe5ciI4GWmuM81pEPlJNEBERIoE5sMqthtV/exec",apiKey:""}));
   const [showSetup, setShowSetup] = useState(false);
   const [evolution, setEvolution] = useState(()=>LS.get("berlim_evolution_v2",[
     {date:"06/01",peso:59.8,gordura:17.3,musculo:26.9,agua:35.5,massaGorda:10.3,mlg:49.5,obs:""},
